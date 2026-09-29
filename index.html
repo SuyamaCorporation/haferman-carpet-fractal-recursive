@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Haferman Carpet Fractal Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0a0a0f; color: #e2e8f0; }
+    #fractal-canvas { image-rendering: pixelated; display: block; border-radius: 8px; }
+    input[type=range] { accent-color: #a855f7; }
+    .pattern-btn { cursor: pointer; transition: all 0.15s; }
+    .pattern-btn:hover { transform: scale(1.05); }
+    .pattern-btn.active { box-shadow: 0 0 0 2px #a855f7; }
+    .mini-pattern { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; width: 42px; height: 42px; }
+    .mini-cell { border-radius: 1px; }
+  </style>
+</head>
+<body class="min-h-screen font-mono">
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <header class="text-center mb-8">
+      <h1 class="text-4xl font-bold text-purple-400 mb-2">Haferman Carpet</h1>
+      <p class="text-slate-400">A generalization of the Sierpiński carpet — each 3×3 block replaced recursively with a hole pattern</p>
+    </header>
+
+    <div class="flex flex-col lg:flex-row gap-6">
+      <!-- Canvas -->
+      <div class="flex-1 flex flex-col items-center">
+        <div class="bg-slate-900 rounded-xl p-4 w-full flex justify-center">
+          <canvas id="fractal-canvas" width="540" height="540" style="max-width:100%" aria-label="Haferman carpet fractal"></canvas>
+        </div>
+        <div class="mt-3 text-xs text-slate-400 text-center" id="render-info"></div>
+        <div class="mt-3 flex gap-3">
+          <button onclick="downloadCanvas()" class="px-5 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm">
+            Download PNG
+          </button>
+          <button onclick="render()" class="px-5 py-2 bg-purple-700 hover:bg-purple-600 rounded text-sm font-semibold">
+            Re-render
+          </button>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="w-full lg:w-72 space-y-4">
+        <div class="bg-slate-800 rounded-xl p-5">
+          <h2 class="font-bold text-purple-300 mb-3">Parameters</h2>
+          <div class="space-y-4">
+            <div>
+              <div class="flex justify-between text-sm mb-1">
+                <label class="text-slate-400">Depth (iterations)</label>
+                <span id="depth-val" class="text-purple-300 font-bold">4</span>
+              </div>
+              <input type="range" id="depth-slider" min="1" max="6" value="4" step="1"
+                aria-label="Fractal depth" oninput="document.getElementById('depth-val').textContent=this.value">
+            </div>
+            <div>
+              <label class="text-sm text-slate-400 block mb-2">Fill color</label>
+              <input type="color" id="fill-color" value="#a855f7" class="h-8 w-full rounded cursor-pointer" aria-label="Fill color">
+            </div>
+            <div>
+              <label class="text-sm text-slate-400 block mb-2">Background color</label>
+              <input type="color" id="bg-color" value="#0a0a0f" class="h-8 w-full rounded cursor-pointer" aria-label="Background color">
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-slate-800 rounded-xl p-5">
+          <h2 class="font-bold text-purple-300 mb-3">Hole Patterns (3×3 grid)</h2>
+          <p class="text-xs text-slate-400 mb-3">White = filled, black = hole. Select a preset or click cells below.</p>
+          <div class="grid grid-cols-3 gap-2 mb-4" id="pattern-presets"></div>
+          <div class="mb-2 text-xs text-slate-400">Custom pattern (click to toggle):</div>
+          <div id="custom-grid" class="grid grid-cols-3 gap-1" style="width:fit-content"></div>
+          <button onclick="useCustom()" class="mt-3 w-full py-1.5 bg-purple-800 hover:bg-purple-700 rounded text-sm">
+            Use Custom Pattern
+          </button>
+        </div>
+
+        <div class="bg-slate-800 rounded-xl p-5">
+          <h2 class="font-bold text-purple-300 mb-2">Info</h2>
+          <div class="text-sm space-y-1 text-slate-300" id="fractal-info"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Theory -->
+    <div class="bg-slate-800 rounded-xl p-6 mt-6">
+      <h2 class="font-bold text-purple-300 mb-3">About Haferman Carpets</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-300">
+        <div>
+          <p class="mb-2">The <strong class="text-white">Sierpiński carpet</strong> is the special case where the center cell of a 3×3 grid is removed. After n iterations, 8ⁿ filled squares remain out of 9ⁿ total.</p>
+          <p>The <strong class="text-white">Haferman carpet</strong> generalizes this: any subset of cells can be designated as holes. Different patterns produce different fractal dimensions and visual textures.</p>
+        </div>
+        <div>
+          <p class="mb-2">The <strong class="text-white">fractal (Hausdorff) dimension</strong> is:</p>
+          <div class="bg-slate-900 rounded p-2 font-mono text-indigo-300 text-xs mb-2">d = log(filled) / log(3)</div>
+          <p>For Sierpiński carpet: d = log(8)/log(3) ≈ 1.893</p>
+          <p class="mt-1">Patterns with more holes have lower dimension; denser patterns approach d=2.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Pattern: 9-element array, 1=filled, 0=hole (reading left-to-right, top-to-bottom)
+    const PRESETS = [
+      { name: 'Sierpiński', pattern: [1,1,1,1,0,1,1,1,1] },
+      { name: 'Cross', pattern: [0,1,0,1,1,1,0,1,0] },
+      { name: 'Corners', pattern: [1,0,1,0,1,0,1,0,1] },
+      { name: 'H-shape', pattern: [1,0,1,1,1,1,1,0,1] },
+      { name: 'Dense', pattern: [1,1,1,1,0,1,0,1,0] },
+      { name: 'Sparse', pattern: [1,0,0,0,1,0,0,0,1] },
+      { name: 'Cantor', pattern: [1,0,1,1,0,1,1,0,1] },
+      { name: 'Frame', pattern: [1,1,1,1,0,1,1,1,1] },
+      { name: 'Diagonal', pattern: [1,0,0,0,1,0,0,0,1] },
+    ];
+
+    let currentPattern = [...PRESETS[0].pattern];
+    let customPattern = [...PRESETS[0].pattern];
+
+    function buildPresets() {
+      const el = document.getElementById('pattern-presets');
+      el.innerHTML = '';
+      PRESETS.forEach((p, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'pattern-btn bg-slate-900 rounded p-2 flex flex-col items-center gap-1' + (idx===0?' active':'');
+        btn.setAttribute('aria-label', `Pattern: ${p.name}`);
+        const grid = document.createElement('div');
+        grid.className = 'mini-pattern';
+        p.pattern.forEach(v => {
+          const cell = document.createElement('div');
+          cell.className = 'mini-cell';
+          cell.style.background = v ? '#a855f7' : '#0a0a0f';
+          grid.appendChild(cell);
+        });
+        const lbl = document.createElement('span');
+        lbl.className = 'text-xs text-slate-400 leading-tight text-center';
+        lbl.textContent = p.name;
+        btn.appendChild(grid); btn.appendChild(lbl);
+        btn.onclick = () => {
+          document.querySelectorAll('.pattern-btn').forEach(b=>b.classList.remove('active'));
+          btn.classList.add('active');
+          currentPattern = [...p.pattern];
+          updateCustomGrid();
+          render();
+        };
+        el.appendChild(btn);
+      });
+    }
+
+    function buildCustomGrid() {
+      const el = document.getElementById('custom-grid');
+      el.innerHTML = '';
+      for(let i=0;i<9;i++) {
+        const cell = document.createElement('div');
+        cell.style.width='36px'; cell.style.height='36px';
+        cell.style.cursor='pointer';
+        cell.style.border='1.5px solid #374151';
+        cell.style.borderRadius='3px';
+        cell.style.background = customPattern[i]?'#a855f7':'#0a0a0f';
+        cell.setAttribute('role','button');
+        cell.setAttribute('aria-label', `Cell ${i+1}: ${customPattern[i]?'filled':'hole'}`);
+        cell.setAttribute('tabindex','0');
+        const ii=i;
+        cell.onclick=()=>{ customPattern[ii]=customPattern[ii]?0:1; buildCustomGrid(); };
+        cell.onkeydown=(e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); customPattern[ii]=customPattern[ii]?0:1; buildCustomGrid(); } };
+        el.appendChild(cell);
+      }
+    }
+
+    function updateCustomGrid() {
+      customPattern = [...currentPattern];
+      buildCustomGrid();
+    }
+
+    function useCustom() {
+      currentPattern = [...customPattern];
+      render();
+    }
+
+    function render() {
+      const depth = +document.getElementById('depth-slider').value;
+      const fillColor = document.getElementById('fill-color').value;
+      const bgColor = document.getElementById('bg-color').value;
+      const canvas = document.getElementById('fractal-canvas');
+      const ctx = canvas.getContext('2d');
+      const SIZE = 540;
+      canvas.width = SIZE; canvas.height = SIZE;
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, SIZE, SIZE);
+      const t0 = performance.now();
+      drawHaferman(ctx, 0, 0, SIZE, depth, fillColor, bgColor);
+      const elapsed = (performance.now()-t0).toFixed(1);
+      const filledCount = currentPattern.filter(v=>v).length;
+      const dim = (Math.log(filledCount)/Math.log(3)).toFixed(4);
+      const cells = Math.pow(filledCount, depth);
+      document.getElementById('render-info').textContent = `Depth ${depth} — ${elapsed}ms — ~${cells.toExponential(2)} filled cells`;
+      document.getElementById('fractal-info').innerHTML = `
+        <div class="flex justify-between"><span class="text-slate-400">Depth:</span><span class="text-purple-300">${depth}</span></div>
+        <div class="flex justify-between"><span class="text-slate-400">Filled cells/block:</span><span>${filledCount}/9</span></div>
+        <div class="flex justify-between"><span class="text-slate-400">Fractal dimension:</span><span class="text-yellow-300">${dim}</span></div>
+        <div class="flex justify-between"><span class="text-slate-400">Total filled cells:</span><span class="text-green-300">${cells.toExponential(2)}</span></div>
+      `;
+    }
+
+    function drawHaferman(ctx, x, y, size, depth, fillColor, bgColor) {
+      if(depth === 0) {
+        ctx.fillStyle = fillColor;
+        ctx.fillRect(x, y, size, size);
+        return;
+      }
+      const s = size / 3;
+      for(let r=0;r<3;r++) {
+        for(let c=0;c<3;c++) {
+          const idx = r*3+c;
+          if(currentPattern[idx]) {
+            drawHaferman(ctx, x+c*s, y+r*s, s, depth-1, fillColor, bgColor);
+          }
+          // else: leave as background (already filled)
+        }
+      }
+    }
+
+    function downloadCanvas() {
+      const canvas = document.getElementById('fractal-canvas');
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL('image/png');
+      a.download = 'haferman-carpet.png';
+      a.click();
+    }
+
+    buildPresets();
+    buildCustomGrid();
+    render();
+  </script>
+</body>
+</html>
